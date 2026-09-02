@@ -178,9 +178,9 @@ def initialize_session():
         "session_wrong_count": 0,
         "answered": False,
         "result": "",
-        "selected_answer": None,
         "question": None,
         "choices": [],
+        "question_no": 0,
     }
     for key, default_value in defaults.items():
         if key not in st.session_state:
@@ -193,7 +193,7 @@ def set_new_question(words):
     st.session_state.choices = choices
     st.session_state.answered = False
     st.session_state.result = ""
-    st.session_state.selected_answer = None
+    st.session_state.question_no += 1
 
 
 def metric_card(label, value, subtext="", accent="gold"):
@@ -520,7 +520,7 @@ st.markdown(
 answer = st.radio(
     "正しい意味を選んでください",
     choices,
-    key="selected_answer",
+    key=f"selected_answer_{st.session_state.question_no}",
     disabled=st.session_state.answered,
 )
 

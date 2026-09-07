@@ -16,7 +16,7 @@ notion = Client(auth=TOKEN)
 
 MASTERED_CORRECT_COUNT = 5
 REVIEW_WRONG_COUNT = 3
-RESULT_DISPLAY_SECONDS = 0.3
+RESULT_DISPLAY_SECONDS = 0.2
 
 
 def get_text_from_title(property_data):
@@ -194,6 +194,41 @@ def set_new_question(words):
     st.session_state.selected_answer = None
 
 
+def handle_answer():
+    """4択がクリックされた直後に正誤判定し、Notionを更新する。"""
+    if st.session_state.answered:
+        return
+
+    answer = st.session_state.get("selected_answer")
+    question = st.session_state.question
+
+    # 未選択状態や問題なしでは処理しない
+    if answer is None or question is None:
+        return
+
+    st.session_state.answered = True
+
+    if answer == question["description"]:
+        st.session_state.result = "正解！"
+        st.session_state.session_correct_count += 1
+        increment_count(
+            page_id=question["page_id"],
+            property_name="正解数",
+            current_count=question["correct_count"],
+        )
+        update_learning_date(question["page_id"])
+    else:
+        st.session_state.result = (
+            f"不正解です。正しい意味は「{question['description']}」です。"
+        )
+        st.session_state.session_wrong_count += 1
+        increment_count(
+            page_id=question["page_id"],
+            property_name="不正解数",
+            current_count=question["wrong_count"],
+        )
+
+
 def metric_card(label, value, subtext="", accent="gold"):
     safe_label = html.escape(str(label))
     safe_value = html.escape(str(value))
@@ -352,39 +387,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-answer = st.radio(
+st.radio(
     "正しい意味を選んでください",
     choices,
+    index=None,
     key="selected_answer",
     disabled=st.session_state.answered,
+    on_change=handle_answer,
 )
-
-if st.button(
-    "回答する",
-    key="answer_button",
-    disabled=st.session_state.answered,
-    use_container_width=True,
-):
-    st.session_state.answered = True
-    if answer == question["description"]:
-        st.session_state.result = "正解！"
-        st.session_state.session_correct_count += 1
-        increment_count(
-            page_id=question["page_id"],
-            property_name="正解数",
-            current_count=question["correct_count"],
-        )
-        update_learning_date(question["page_id"])
-    else:
-        st.session_state.result = f"不正解です。正しい意味は「{question['description']}」です。"
-        st.session_state.session_wrong_count += 1
-        increment_count(
-            page_id=question["page_id"],
-            property_name="不正解数",
-            current_count=question["wrong_count"],
-        )
-    # 結果表示用の再実行。ここでは次の問題へは進めない。
-    st.rerun()
 
 if st.session_state.answered:
     if st.session_state.result.startswith("正解"):
@@ -396,7 +406,7 @@ if st.session_state.answered:
         if question["wrong_count"] + 1 >= REVIEW_WRONG_COUNT:
             st.warning("不正解数が3回以上になったため、優先復習の対象です。")
 
-    # 正誤結果を表示してから、次の問題への移動を予約する。
+    # 選択肢クリック後に正誤結果を表示し、次の問題への移動を予約する。
     time.sleep(RESULT_DISPLAY_SECONDS)
     st.session_state.advance_question = True
     st.rerun()

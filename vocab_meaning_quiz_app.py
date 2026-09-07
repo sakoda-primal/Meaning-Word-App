@@ -4,6 +4,7 @@
 
 import html
 import random
+import time
 from datetime import date
 
 import streamlit as st
@@ -15,6 +16,7 @@ notion = Client(auth=TOKEN)
 
 MASTERED_CORRECT_COUNT = 5
 REVIEW_WRONG_COUNT = 3
+RESULT_DISPLAY_SECONDS = 0.3
 
 
 def get_text_from_title(property_data):
@@ -114,14 +116,12 @@ def choose_question(words):
     if not candidates:
         return None
 
-    # 1. 学習日が空欄の用語を最優先
     unlearned_words = [
         item for item in candidates if item.get("learning_date") is None
     ]
     if unlearned_words:
         return random.choice(unlearned_words)
 
-    # 2. 不正解数が3以上なら優先復習
     review_words = [
         item
         for item in candidates
@@ -130,8 +130,7 @@ def choose_question(words):
     if review_words:
         highest_wrong_count = max(item["wrong_count"] for item in review_words)
         most_missed = [
-            item
-            for item in review_words
+            item for item in review_words
             if item["wrong_count"] == highest_wrong_count
         ]
         oldest_date = min(item["learning_date"] for item in most_missed)
@@ -140,7 +139,6 @@ def choose_question(words):
         ]
         return random.choice(oldest_review_words)
 
-    # 3. 学習済みは学習日が最も古いものを優先
     oldest_date = min(item["learning_date"] for item in candidates)
     oldest_words = [
         item for item in candidates if item["learning_date"] == oldest_date
@@ -154,8 +152,6 @@ def create_question(words):
         return None, []
 
     correct_description = question["description"]
-
-    # 重複する説明を除き、別の意味を3件選ぶ。
     other_descriptions = list(
         dict.fromkeys(
             item["description"]
@@ -178,9 +174,10 @@ def initialize_session():
         "session_wrong_count": 0,
         "answered": False,
         "result": "",
+        "selected_answer": None,
         "question": None,
         "choices": [],
-        "question_no": 0,
+        "advance_question": False,
     }
     for key, default_value in defaults.items():
         if key not in st.session_state:
@@ -193,7 +190,8 @@ def set_new_question(words):
     st.session_state.choices = choices
     st.session_state.answered = False
     st.session_state.result = ""
-    st.session_state.question_no += 1
+    # この関数はラジオボタン生成前にだけ呼ぶ
+    st.session_state.selected_answer = None
 
 
 def metric_card(label, value, subtext="", accent="gold"):
@@ -209,199 +207,48 @@ def metric_card(label, value, subtext="", accent="gold"):
     """
 
 
-st.set_page_config(
-    page_title="Vocabulary Mastery",
-    page_icon="◆",
-    layout="centered",
-)
+st.set_page_config(page_title="Vocabulary Mastery", page_icon="◆", layout="centered")
 
 st.markdown(
     """
     <style>
     :root {
-        --navy-950: #07111f;
-        --navy-900: #0b1628;
-        --navy-800: #111f35;
-        --slate-700: #29364a;
-        --slate-500: #64748b;
-        --silver: #d7dde7;
-        --ivory: #f5f3ed;
-        --gold: #c7a45b;
-        --gold-soft: #e2ca91;
-        --success: #75a892;
-        --danger: #c88181;
+        --navy-950: #07111f; --navy-900: #0b1628; --navy-800: #111f35;
+        --silver: #d7dde7; --ivory: #f5f3ed; --gold: #c7a45b;
+        --gold-soft: #e2ca91; --success: #75a892; --danger: #c88181;
     }
-
     .stApp {
-        background:
-            radial-gradient(circle at 12% 0%, rgba(199,164,91,.10), transparent 26%),
-            linear-gradient(145deg, var(--navy-950) 0%, var(--navy-900) 50%, #101827 100%);
+        background: radial-gradient(circle at 12% 0%, rgba(199,164,91,.10), transparent 26%),
+                    linear-gradient(145deg, var(--navy-950) 0%, var(--navy-900) 50%, #101827 100%);
         color: var(--silver);
     }
-
-    [data-testid="stHeader"] {
-        background: rgba(7, 17, 31, .72);
-    }
-
-    .block-container {
-        max-width: 980px;
-        padding-top: 2.2rem;
-        padding-bottom: 4rem;
-    }
-
-    h1, h2, h3, p, label, [data-testid="stCaptionContainer"] {
-        color: var(--silver) !important;
-    }
-
-    .brand-kicker {
-        color: var(--gold-soft);
-        font-size: .72rem;
-        letter-spacing: .28em;
-        text-transform: uppercase;
-        margin-bottom: .35rem;
-    }
-
-    .brand-title {
-        color: var(--ivory);
-        font-size: clamp(2rem, 5vw, 3.35rem);
-        font-weight: 650;
-        line-height: 1.05;
-        letter-spacing: .035em;
-        margin: 0;
-    }
-
-    .brand-subtitle {
-        color: #98a5b8;
-        font-size: .92rem;
-        letter-spacing: .08em;
-        margin-top: .65rem;
-        margin-bottom: 2rem;
-    }
-
-    .gold-line {
-        width: 72px;
-        height: 2px;
-        background: linear-gradient(90deg, var(--gold), transparent);
-        margin: 1rem 0 1.8rem;
-    }
-
-    .metric-card {
-        min-height: 126px;
-        padding: 1.15rem 1.1rem;
-        background: linear-gradient(145deg, rgba(30,43,61,.94), rgba(15,26,43,.96));
-        border: 1px solid #344158;
-        border-top: 2px solid var(--gold);
-        box-shadow: 0 16px 35px rgba(0,0,0,.22);
-    }
-
+    [data-testid="stHeader"] { background: rgba(7,17,31,.72); }
+    .block-container { max-width: 980px; padding-top: 2.2rem; padding-bottom: 4rem; }
+    h1, h2, h3, p, label, [data-testid="stCaptionContainer"] { color: var(--silver) !important; }
+    .brand-kicker { color: var(--gold-soft); font-size: .72rem; letter-spacing: .28em; text-transform: uppercase; margin-bottom: .35rem; }
+    .brand-title { color: var(--ivory); font-size: clamp(2rem,5vw,3.35rem); font-weight: 650; line-height: 1.05; letter-spacing: .035em; margin: 0; }
+    .brand-subtitle { color: #98a5b8; font-size: .92rem; letter-spacing: .08em; margin-top: .65rem; margin-bottom: 2rem; }
+    .gold-line { width: 72px; height: 2px; background: linear-gradient(90deg,var(--gold),transparent); margin: 1rem 0 1.8rem; }
+    .metric-card { min-height: 126px; padding: 1.15rem 1.1rem; background: linear-gradient(145deg,rgba(30,43,61,.94),rgba(15,26,43,.96)); border: 1px solid #344158; border-top: 2px solid var(--gold); box-shadow: 0 16px 35px rgba(0,0,0,.22); }
     .metric-card.silver { border-top-color: #8996a8; }
     .metric-card.green { border-top-color: var(--success); }
     .metric-card.red { border-top-color: var(--danger); }
-
-    .metric-label {
-        color: #919db0;
-        font-size: .73rem;
-        letter-spacing: .13em;
-    }
-
-    .metric-value {
-        color: var(--ivory);
-        font-size: 2rem;
-        font-weight: 650;
-        margin: .35rem 0 .1rem;
-    }
-
-    .metric-subtext {
-        color: #78869a;
-        font-size: .74rem;
-    }
-
-    .section-label {
-        color: var(--gold-soft);
-        font-size: .7rem;
-        letter-spacing: .24em;
-        text-transform: uppercase;
-        margin-top: 2.2rem;
-        margin-bottom: .65rem;
-    }
-
-    .question-card {
-        background: linear-gradient(135deg, #15243a 0%, #0b1628 100%);
-        border: 1px solid #3a4659;
-        border-left: 4px solid var(--gold);
-        box-shadow: 0 22px 50px rgba(0,0,0,.28);
-        padding: 2.4rem 1.5rem;
-        margin-bottom: 1.35rem;
-        text-align: center;
-    }
-
-    .question-hint {
-        color: #8592a5;
-        font-size: .72rem;
-        letter-spacing: .2em;
-        margin-bottom: .9rem;
-    }
-
-    .question-word {
-        color: var(--ivory);
-        font-size: clamp(1.65rem, 5vw, 2.8rem);
-        font-weight: 650;
-        letter-spacing: .025em;
-        overflow-wrap: anywhere;
-    }
-
-    div[role="radiogroup"] {
-        gap: .65rem;
-    }
-
-    div[role="radiogroup"] label {
-        background: rgba(23, 35, 53, .9);
-        border: 1px solid #354258;
-        padding: .9rem 1rem;
-        transition: border-color .15s ease, background .15s ease;
-    }
-
-    div[role="radiogroup"] label:hover {
-        border-color: var(--gold);
-        background: rgba(35, 48, 68, .95);
-    }
-
-    .stButton > button {
-        min-height: 3.15rem;
-        width: 100%;
-        border-radius: 0;
-        border: 1px solid #4c596d;
-        background: #17253a;
-        color: var(--ivory);
-        font-weight: 650;
-        letter-spacing: .06em;
-    }
-
-    .stButton > button:hover {
-        border-color: var(--gold);
-        color: var(--gold-soft);
-        background: #1d2c43;
-    }
-
-    .stButton > button:disabled {
-        background: #111b2a;
-        color: #566276;
-        border-color: #263247;
-    }
-
-    [data-testid="stProgressBar"] > div > div {
-        background: linear-gradient(90deg, #8f733b, var(--gold-soft));
-    }
-
-    [data-testid="stAlert"] {
-        border-radius: 0;
-        background: rgba(22, 34, 51, .95);
-        border: 1px solid #39465a;
-    }
-
-    hr {
-        border-color: #29364a !important;
-    }
+    .metric-label { color: #919db0; font-size: .73rem; letter-spacing: .13em; }
+    .metric-value { color: var(--ivory); font-size: 2rem; font-weight: 650; margin: .35rem 0 .1rem; }
+    .metric-subtext { color: #78869a; font-size: .74rem; }
+    .section-label { color: var(--gold-soft); font-size: .7rem; letter-spacing: .24em; text-transform: uppercase; margin-top: 2.2rem; margin-bottom: .65rem; }
+    .question-card { background: linear-gradient(135deg,#15243a 0%,#0b1628 100%); border: 1px solid #3a4659; border-left: 4px solid var(--gold); box-shadow: 0 22px 50px rgba(0,0,0,.28); padding: 2.4rem 1.5rem; margin-bottom: 1.35rem; text-align: center; }
+    .question-hint { color: #8592a5; font-size: .72rem; letter-spacing: .2em; margin-bottom: .9rem; }
+    .question-word { color: var(--ivory); font-size: clamp(1.65rem,5vw,2.8rem); font-weight: 650; overflow-wrap: anywhere; }
+    div[role="radiogroup"] { gap: .65rem; }
+    div[role="radiogroup"] label { background: rgba(23,35,53,.9); border: 1px solid #354258; padding: .9rem 1rem; transition: border-color .15s ease, background .15s ease; }
+    div[role="radiogroup"] label:hover { border-color: var(--gold); background: rgba(35,48,68,.95); }
+    .stButton > button { min-height: 3.15rem; width: 100%; border-radius: 0; border: 1px solid #4c596d; background: #17253a; color: var(--ivory); font-weight: 650; letter-spacing: .06em; }
+    .stButton > button:hover { border-color: var(--gold); color: var(--gold-soft); background: #1d2c43; }
+    .stButton > button:disabled { background: #111b2a; color: #566276; border-color: #263247; }
+    [data-testid="stProgressBar"] > div > div { background: linear-gradient(90deg,#8f733b,var(--gold-soft)); }
+    [data-testid="stAlert"] { border-radius: 0; background: rgba(22,34,51,.95); border: 1px solid #39465a; }
+    hr { border-color: #29364a !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -418,6 +265,14 @@ st.markdown(
 )
 
 initialize_session()
+
+# 前の実行で予約された「次の問題」を、ウィジェット生成前に準備する。
+# これにより StreamlitWidgetAlreadyInstantiatedError を防ぐ。
+if st.session_state.pop("advance_question", False):
+    st.cache_data.clear()
+    refreshed_words = load_words_from_notion()
+    set_new_question(refreshed_words)
+
 words = load_words_from_notion()
 
 if len(words) < 4:
@@ -430,18 +285,13 @@ if st.session_state.question is None:
 question_candidates = get_question_candidates(words)
 today = date.today().isoformat()
 mastered_count = len(words) - len(question_candidates)
-unlearned_count = sum(
-    1 for item in question_candidates if item.get("learning_date") is None
-)
+unlearned_count = sum(1 for item in question_candidates if item.get("learning_date") is None)
 review_count = sum(
-    1
-    for item in question_candidates
+    1 for item in question_candidates
     if item.get("learning_date") is not None
     and item.get("wrong_count", 0) >= REVIEW_WRONG_COUNT
 )
-today_studied_count = sum(
-    1 for item in words if item.get("learning_date") == today
-)
+today_studied_count = sum(1 for item in words if item.get("learning_date") == today)
 mastery_rate = mastered_count / len(words) if words else 0
 
 st.markdown('<div class="section-label">Learning Overview</div>', unsafe_allow_html=True)
@@ -457,37 +307,22 @@ for column, values in zip(metric_columns, metric_values):
         st.markdown(metric_card(*values), unsafe_allow_html=True)
 
 st.progress(mastery_rate)
-st.caption(
-    f"未学習 {unlearned_count}語　｜　現在の出題対象 {len(question_candidates)}語"
-)
+st.caption(f"未学習 {unlearned_count}語　｜　現在の出題対象 {len(question_candidates)}語")
 
-session_total = (
-    st.session_state.session_correct_count
-    + st.session_state.session_wrong_count
-)
+session_total = st.session_state.session_correct_count + st.session_state.session_wrong_count
 session_accuracy = (
     st.session_state.session_correct_count / session_total * 100
-    if session_total
-    else 0
+    if session_total else 0
 )
 
 st.markdown('<div class="section-label">Current Session</div>', unsafe_allow_html=True)
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.markdown(
-        metric_card("今回の正解", st.session_state.session_correct_count, "このセッション", "green"),
-        unsafe_allow_html=True,
-    )
+    st.markdown(metric_card("今回の正解", st.session_state.session_correct_count, "このセッション", "green"), unsafe_allow_html=True)
 with col2:
-    st.markdown(
-        metric_card("今回の不正解", st.session_state.session_wrong_count, "このセッション", "red"),
-        unsafe_allow_html=True,
-    )
+    st.markdown(metric_card("今回の不正解", st.session_state.session_wrong_count, "このセッション", "red"), unsafe_allow_html=True)
 with col3:
-    st.markdown(
-        metric_card("今回の正解率", f"{session_accuracy:.1f}%", f"回答数 {session_total}問", "silver"),
-        unsafe_allow_html=True,
-    )
+    st.markdown(metric_card("今回の正解率", f"{session_accuracy:.1f}%", f"回答数 {session_total}問", "silver"), unsafe_allow_html=True)
 
 if not question_candidates:
     st.balloons()
@@ -520,39 +355,36 @@ st.markdown(
 answer = st.radio(
     "正しい意味を選んでください",
     choices,
-    key=f"selected_answer_{st.session_state.question_no}",
+    key="selected_answer",
     disabled=st.session_state.answered,
 )
 
-button_col1, button_col2 = st.columns(2)
-with button_col1:
-    if st.button(
-        "回答する",
-        key="answer_button",
-        disabled=st.session_state.answered,
-        use_container_width=True,
-    ):
-        st.session_state.answered = True
-        if answer == question["description"]:
-            st.session_state.result = "正解！"
-            st.session_state.session_correct_count += 1
-            increment_count(
-                page_id=question["page_id"],
-                property_name="正解数",
-                current_count=question["correct_count"],
-            )
-            update_learning_date(question["page_id"])
-        else:
-            st.session_state.result = (
-                f"不正解です。正しい意味は「{question['description']}」です。"
-            )
-            st.session_state.session_wrong_count += 1
-            increment_count(
-                page_id=question["page_id"],
-                property_name="不正解数",
-                current_count=question["wrong_count"],
-            )
-        st.rerun()
+if st.button(
+    "回答する",
+    key="answer_button",
+    disabled=st.session_state.answered,
+    use_container_width=True,
+):
+    st.session_state.answered = True
+    if answer == question["description"]:
+        st.session_state.result = "正解！"
+        st.session_state.session_correct_count += 1
+        increment_count(
+            page_id=question["page_id"],
+            property_name="正解数",
+            current_count=question["correct_count"],
+        )
+        update_learning_date(question["page_id"])
+    else:
+        st.session_state.result = f"不正解です。正しい意味は「{question['description']}」です。"
+        st.session_state.session_wrong_count += 1
+        increment_count(
+            page_id=question["page_id"],
+            property_name="不正解数",
+            current_count=question["wrong_count"],
+        )
+    # 結果表示用の再実行。ここでは次の問題へは進めない。
+    st.rerun()
 
 if st.session_state.answered:
     if st.session_state.result.startswith("正解"):
@@ -564,14 +396,7 @@ if st.session_state.answered:
         if question["wrong_count"] + 1 >= REVIEW_WRONG_COUNT:
             st.warning("不正解数が3回以上になったため、優先復習の対象です。")
 
-with button_col2:
-    if st.button(
-        "次の問題へ",
-        key="next_button",
-        disabled=not st.session_state.answered,
-        use_container_width=True,
-    ):
-        st.cache_data.clear()
-        refreshed_words = load_words_from_notion()
-        set_new_question(refreshed_words)
-        st.rerun()
+    # 正誤結果を表示してから、次の問題への移動を予約する。
+    time.sleep(RESULT_DISPLAY_SECONDS)
+    st.session_state.advance_question = True
+    st.rerun()
